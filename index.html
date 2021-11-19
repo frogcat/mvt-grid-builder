@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>mvt-grid-builder</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/purecss@2.0.6/build/pure-min.css" />
+  <link href="https://unpkg.com/maplibre-gl@1.15.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@1.15.2/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/pbf@3.2.1/dist/pbf.js"></script>
+  <script src="vector_tile.js"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.slim.min.js"></script>
+  <style>
+    #menu textarea {
+      margin-top: 20px;
+      width: 100%;
+      height: 20em;
+    }
+  </style>
+</head>
+
+<body style="margin:0;padding:0;">
+  <div id="menu" style="position:absolute;top:0;left:0;bottom:0;width:400px;">
+    <form class="pure-form pure-form-stacked" style="margin:10px;">
+      <fieldset>
+        <legend>mvt-grid-builder</legend>
+        <label for="extent">Extent</label>
+        <input type="text" id="extent" value="4096" />
+        <label for="grid">Number of grid</label>
+        <input type="text" id="grid" value="1" />
+        <label for="gap">Gap</label>
+        <input type="text" id="gap" value="32" />
+        <button type="submit" class="pure-button pure-button-primary">Generate grid</button>
+      </fieldset>
+      <textarea id="base64"></textarea>
+    </form>
+  </div>
+  <div id="map" style="position:absolute;top:0;left:400px;bottom:0;right:0;"></div>
+  <script>
+    const map = new maplibregl.Map({
+      container: 'map',
+      zoom: 8,
+      maxZoom: 24,
+      center: [138.906883, 35.173874],
+      hash: true,
+      style: {
+        "version": 8,
+        "glyphs": "https://maps.gsi.go.jp/xyz/noto-jp/{fontstack}/{range}.pbf",
+        "sources": {
+          "ortho": {
+            "type": "raster",
+            "tiles": [
+              "https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+            ],
+            "tileSize": 256,
+            "minzoom": 2,
+            "maxzoom": 18,
+            "attribution": "<a href='https://maps.gsi.go.jp/development/ichiran.html'>地理院タイル</a>"
+          },
+          "grid": {
+            "type": "vector",
+            "tiles": [
+              "data:application/vnd.mapbox-vector-tile;base64,GoYDeAIKB3BvbHlnb24SFAgBGAMiDgkQEBoA4A/gDwAA3w8PEhUIAhgDIg8JkBAQGgDgD+APAADfDw8SFQgDGAMiDwmQIBAaAOAP4A8AAN8PDxIVCAQYAyIPCZAwEBoA4A/gDwAA3w8PEhUIBRgDIg8JEJAQGgDgD+APAADfDw8SFggGGAMiEAmQEJAQGgDgD+APAADfDw8SFggHGAMiEAmQIJAQGgDgD+APAADfDw8SFggIGAMiEAmQMJAQGgDgD+APAADfDw8SFQgJGAMiDwkQkCAaAOAP4A8AAN8PDxIWCAoYAyIQCZAQkCAaAOAP4A8AAN8PDxIWCAsYAyIQCZAgkCAaAOAP4A8AAN8PDxIWCAwYAyIQCZAwkCAaAOAP4A8AAN8PDxIVCA0YAyIPCRCQMBoA4A/gDwAA3w8PEhYIDhgDIhAJkBCQMBoA4A/gDwAA3w8PEhYIDxgDIhAJkCCQMBoA4A/gDwAA3w8PEhYIEBgDIhAJkDCQMBoA4A/gDwAA3w8PKIAg"
+            ],
+            "minzoom": 2,
+            "maxzoom": 18
+          }
+        },
+        "layers": [{
+          "id": "ortho",
+          "type": "raster",
+          "source": "ortho",
+          "minzoom": 2,
+          "maxzoom": 24,
+          "paint": {
+            "raster-opacity": 0.8
+          },
+          "layout": {
+            "visibility": "visible"
+          }
+        }, {
+          "id": "grid",
+          "type": "fill",
+          "source": "grid",
+          "source-layer": "polygon",
+          "paint": {
+            "fill-color": "#000000",
+            "fill-opacity": 0.20
+          },
+          "minzoom": 2,
+          "maxzoom": 24
+        }]
+      }
+    });
+
+    map.on("load", function() {
+      $("#menu form").submit(function() {
+        const extent = parseInt($("#extent").val());
+        const gap = parseInt($("#gap").val());
+        const grid = parseInt($("#grid").val());
+
+        const boxes = [];
+        for (let y = 0; y < grid; y++) {
+          for (let x = 0; x < grid; x++) {
+            boxes.push({
+              x: (extent / grid) * x + gap,
+              y: (extent / grid) * y + gap,
+              w: (extent / grid) - gap,
+              h: (extent / grid) - gap
+            });
+          }
+        }
+
+        const encode = value => (value << 1) ^ (value >> 31);
+
+        const c = {
+          "layers": [{
+            "version": 2,
+            "name": "polygon",
+            "features": boxes.map((box, i) => {
+              return {
+                "id": (i + 1),
+                "tags": [],
+                "type": 3,
+                "geometry": [
+                  9, // [00001-001] command id 1 : moveTo,  command count 1
+                  encode(box.x),
+                  encode(box.y),
+                  26, // [00011-010] command id 2 : lineTo, command count 3
+                  encode(0),
+                  encode(box.h),
+                  encode(box.w),
+                  encode(0),
+                  encode(0),
+                  encode(-box.h),
+                  15 // [00001-111] command id 7 : closePath
+                ]
+              };
+            }),
+            "keys": [],
+            "values": [],
+            "extent": extent
+          }]
+        };
+
+
+        try {
+          const out = new Pbf();
+          Tile.write(c, out);
+          const bin = out.finish();
+          const base64 = btoa(String.fromCharCode(...bin));
+
+          const url = "data:application/vnd.mapbox-vector-tile;base64," + base64;
+
+          $("#base64").text(url);
+
+          map.removeLayer("grid");
+          map.removeSource("grid");
+          map.addSource("grid", {
+            "type": "vector",
+            "tiles": [url],
+            "minzoom": 2,
+            "maxzoom": 18
+          });
+          map.addLayer({
+            "id": "grid",
+            "type": "fill",
+            "source": "grid",
+            "source-layer": "polygon",
+            "paint": {
+              "fill-color": "#000000",
+              "fill-opacity": 0.20
+            },
+            "minzoom": 2,
+            "maxzoom": 24
+          });
+        } catch (e) {
+          console.error(e);
+        }
+
+        return false;
+      }).submit();
+    });
+  </script>
+
+</body>
+
+</html>
